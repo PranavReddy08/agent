@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delivery Agent Tracking</title>
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; font-family: Arial; }
+        #map { height: 100vh; width: 100%; }
+        #status {
+            position: absolute; top: 10px; left: 10px;
+            background: white; padding: 10px; border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2); z-index: 100;
+        }
+    </style>
+</head>
+<body>
+    <div id="status">Initializing tracking...</div>
+    <div id="map"></div>
+
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyB-AttzsuR48YIyyItx6x2JSN_aigxcC0E&callback=initMap" async defer></script>
+    <script>
+        const destination = { lat: 13.0827, lng: 80.2707 }; // Chennai
+        let map, marker, directionsRenderer, currentRoute, isOnRoute = false;
+
+        function initMap() {
+            map = new google.maps.Map(document.getElementById('map'), {
+                zoom: 15,
+                center: destination
+            });
+
+            marker = new google.maps.Marker({
+                map: map,
+                title: 'Delivery Agent',
+                icon: {
+                    url: 'https://maps.google.com/mapfiles/kml/shapes/motorcycling.png',
+                    scaledSize: new google.maps.Size(40, 40)
+                }
+            });
+
+            directionsRenderer = new google.maps.DirectionsRenderer({
+                map: map,
+                suppressMarkers: true,
+                preserveViewport: true
+            });
+
+            startTracking();
+        }
+
+        function startTracking() {
+            if (navigator.geolocation) {
+                navigator.geolocation.watchPosition(
+                    position => updatePosition(position),
+                    error => handleGeolocationError(error),
+                    { enableHighAccuracy: true, maximumAge: 0 }
+                );
+            } else {
+                document.getElementById('status').textContent = 'Geolocation not supported';
+            }
+        }
+
+        function updatePosition(position) {
+            const currentLocation = {
+                lat: position.coords.latitude,
+                lng: position.coords.longitude
+            };
+
+            marker.setPosition(currentLocation);
+            map.panTo(currentLocation);
+
+            // First time: Draw route
+            if (!currentRoute) {
+                drawRoute(currentLocation);
+                return;
+            }
+
+            // Check if agent is off-route (distance > 50m from the path)
+            const isOffRoute = !google.maps.geometry.poly.isLocationOnEdge(
+                currentLocation,
+                new google.maps.Polyline({ path: currentRoute }),
+                0.05 // ~50 meters tolerance
+            );
+
+            if (isOffRoute && !isOnRoute) {
+                document.getElementById('status').textContent = "Agent deviated! Recalculating route...";
+                drawRoute(currentLocation);
+                isOnRoute = true;
+            } else if (!isOffRoute) {
+                isOnRoute = false;
+            }
+        }
+
+        function drawRoute(origin) {
+            const directionsService = new google.maps.DirectionsService();
+            
+            directionsService.route({
+                origin: origin,
+                destination: destination,
+                travelMode: google.maps.TravelMode.DRIVING
+            }, (response, status) => {
+                if (status === 'OK') {
+                    directionsRenderer.setDirections(response);
+                    currentRoute = response.routes[0].overview_path;
+                    document.getElementById('status').textContent = 
+                        `On route to destination | Speed: ${(position.coords.speed || 0).toFixed(1)} m/s`;
+                } else {
+                    console.error('Route request failed:', status);
+                }
+            });
+        }
+
+        function handleGeolocationError(error) {
+            console.error('Geolocation error:', error);
+            document.getElementById('status').textContent = 'Error: ' + error.message;
+        }
+    </script>
+</body>
+</html>
