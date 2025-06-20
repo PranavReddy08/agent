@@ -1,160 +1,124 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Delivery Agent Tracking</title>
-  <style>
-    html, body {
-      height: 100%; margin: 0; font-family: Arial;
-    }
-    #map {
-      height: 100vh; width: 100%;
-    }
-    #status {
-      position: absolute; top: 10px; left: 10px;
-      background: white; padding: 10px; border-radius: 5px;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.2); z-index: 100;
-    }
-    #recenter {
-      position: absolute; top: 60px; left: 10px;
-      z-index: 101; background: #007bff; color: white;
-      border: none; padding: 8px 12px; border-radius: 5px;
-      cursor: pointer; font-size: 14px;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delivery Agent Tracking</title>
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; font-family: Arial; }
+        #map { height: 100vh; width: 100%; }
+        #status {
+            position: absolute; top: 10px; left: 10px;
+            background: white; padding: 10px; border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2); z-index: 100;
+        }
+    </style>
 </head>
 <body>
-  <div id="status">Initializing tracking...</div>
-  <button id="recenter" onclick="recenterMap()">Recenter</button>
-  <div id="map"></div>
+    <div id="status">Initializing tracking...</div>
+    <div id="map"></div>
 
-  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyB-AttzsuR48YIyyItx6x2JSN_aigxcC0E&libraries=geometry&callback=initMap" async defer></script>
-  <script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyB-AttzsuR48YIyyItx6x2JSN_aigxcC0E&callback=initMap" async defer></script>
+    <script>
     const destination = { lat: 17.4065, lng: 78.4772 }; // Hyderabad
     let map, marker, directionsRenderer, currentRoute = [], isRouting = false;
-    let shouldRecenter = true;
-    let lastHeading = 0;
 
     function initMap() {
-      map = new google.maps.Map(document.getElementById('map'), {
-        zoom: 15,
-        center: destination,
-        mapTypeId: 'roadmap',
-        rotateControl: true,
-      });
+        map = new google.maps.Map(document.getElementById('map'), {
+            zoom: 15, // fixed zoom level
+            center: destination
+        });
 
-      marker = new google.maps.Marker({
-        map: map,
-        title: 'Delivery Agent',
-        icon: {
-          url: 'https://maps.google.com/mapfiles/kml/shapes/motorcycling.png',
-          scaledSize: new google.maps.Size(40, 40)
-        }
-      });
+        marker = new google.maps.Marker({
+            map: map,
+            title: 'Delivery Agent',
+            icon: {
+                url: 'https://maps.google.com/mapfiles/kml/shapes/motorcycling.png',
+                scaledSize: new google.maps.Size(40, 40)
+            }
+        });
 
-      directionsRenderer = new google.maps.DirectionsRenderer({
-        map: map,
-        suppressMarkers: true,
-        preserveViewport: true
-      });
+        directionsRenderer = new google.maps.DirectionsRenderer({
+            map: map,
+            suppressMarkers: true,
+            preserveViewport: true
+        });
 
-      startTracking();
+        startTracking();
     }
 
     function startTracking() {
-      if (navigator.geolocation) {
-        navigator.geolocation.watchPosition(
-          updatePosition,
-          handleGeolocationError,
-          { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
-        );
-      } else {
-        document.getElementById('status').textContent = 'Geolocation not supported';
-      }
+        if (navigator.geolocation) {
+            navigator.geolocation.watchPosition(
+                position => updatePosition(position),
+                error => handleGeolocationError(error),
+                { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
+            );
+        } else {
+            document.getElementById('status').textContent = 'Geolocation not supported';
+        }
     }
 
     function updatePosition(position) {
-      const currentLocation = {
-        lat: position.coords.latitude,
-        lng: position.coords.longitude
-      };
+        const currentLocation = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude
+        };
 
-      marker.setPosition(currentLocation);
+        marker.setPosition(currentLocation);
+        map.setCenter(currentLocation); // Keep center updated
 
-      if (shouldRecenter) {
-        map.setZoom(15);
-        map.panTo(currentLocation);
-
-        // Optional: rotate map according to heading
-        if (position.coords.heading !== null && !isNaN(position.coords.heading)) {
-          const heading = position.coords.heading;
-          if (Math.abs(heading - lastHeading) > 10) {
-            map.setHeading(heading);
-            lastHeading = heading;
-          }
+        // Initial draw
+        if (currentRoute.length === 0 && !isRouting) {
+            drawRoute(currentLocation, position.coords.speed);
+            return;
         }
-      }
 
-      if (currentRoute.length === 0 && !isRouting) {
-        drawRoute(currentLocation, position.coords.speed);
-        return;
-      }
+        // Check if agent is off the current route path
+        const isOffRoute = !google.maps.geometry.poly.isLocationOnEdge(
+            currentLocation,
+            new google.maps.Polyline({ path: currentRoute }),
+            0.0005 // ~50 meters tolerance in degrees
+        );
 
-      const isOffRoute = !google.maps.geometry.poly.isLocationOnEdge(
-        currentLocation,
-        new google.maps.Polyline({ path: currentRoute }),
-        0.0005 // ~50 meters tolerance
-      );
-
-      if (isOffRoute && !isRouting) {
-        document.getElementById('status').textContent = "Agent off-route! Rerouting...";
-        drawRoute(currentLocation, position.coords.speed);
-      } else {
-        document.getElementById('status').textContent =
-          `On route to destination | Speed: ${(position.coords.speed || 0).toFixed(1)} m/s`;
-      }
+        if (isOffRoute && !isRouting) {
+            document.getElementById('status').textContent = "Agent off-route! Rerouting...";
+            drawRoute(currentLocation, position.coords.speed);
+        } else {
+            document.getElementById('status').textContent =
+                `On route to destination | Speed: ${(position.coords.speed || 0).toFixed(1)} m/s`;
+        }
     }
 
     function drawRoute(origin, speed = 0) {
-      isRouting = true;
+        isRouting = true;
 
-      const directionsService = new google.maps.DirectionsService();
-      directionsService.route({
-        origin: origin,
-        destination: destination,
-        travelMode: google.maps.TravelMode.DRIVING
-      }, (response, status) => {
-        isRouting = false;
+        const directionsService = new google.maps.DirectionsService();
+        directionsService.route({
+            origin: origin,
+            destination: destination,
+            travelMode: google.maps.TravelMode.DRIVING
+        }, (response, status) => {
+            isRouting = false;
 
-        if (status === 'OK') {
-          directionsRenderer.setDirections(response);
-          currentRoute = response.routes[0].overview_path;
+            if (status === 'OK') {
+                directionsRenderer.setDirections(response);
+                currentRoute = response.routes[0].overview_path;
 
-          document.getElementById('status').textContent =
-            `Rerouted | Speed: ${speed.toFixed(1)} m/s`;
-        } else {
-          console.error('Route request failed:', status);
-          document.getElementById('status').textContent = 'Routing failed. Try again.';
-        }
-      });
-    }
-
-    function recenterMap() {
-      shouldRecenter = true;
+                document.getElementById('status').textContent =
+                    `Rerouted | Speed: ${speed.toFixed(1)} m/s`;
+            } else {
+                console.error('Route request failed:', status);
+                document.getElementById('status').textContent = 'Routing failed. Try again.';
+            }
+        });
     }
 
     function handleGeolocationError(error) {
-      console.error('Geolocation error:', error);
-      document.getElementById('status').textContent = 'Error: ' + error.message;
+        console.error('Geolocation error:', error);
+        document.getElementById('status').textContent = 'Error: ' + error.message;
     }
+</script>
 
-    // Allow manual map move to cancel auto-recenter
-    window.addEventListener('load', () => {
-      document.getElementById('map').addEventListener('mousedown', () => {
-        shouldRecenter = false;
-      });
-    });
-  </script>
 </body>
 </html>
